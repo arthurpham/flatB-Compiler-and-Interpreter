@@ -3,14 +3,15 @@ Value * ErrorV(string str) { cout << "Error:\n" << str << "\n"; return 0; }
 
 static Module * module;
 static map<string, Value *> NamedValues;
-static IRBuilder<> Builder(getGlobalContext());
+static LLVMContext TheContext;
+static IRBuilder<> Builder(TheContext);
 Constant *CalleeF;
 
 // constructor
 CodeGen::CodeGen()
 {
-    module = new Module("flatB", getGlobalContext());
-    CalleeF = module->getOrInsertFunction("printf",FunctionType::get(IntegerType::getInt32Ty(getGlobalContext()), PointerType::get(Type::getInt8Ty(getGlobalContext()), 0), true ));
+    module = new Module("flatB", TheContext);
+    CalleeF = dyn_cast<Constant>(module->getOrInsertFunction("printf",FunctionType::get(IntegerType::getInt32Ty(TheContext), PointerType::get(Type::getInt8Ty(TheContext), 0), true )).getCallee());
     load_variable = 0;
     is_condition = 0;
     is_expression = 0;
@@ -19,7 +20,8 @@ CodeGen::CodeGen()
 void CodeGen::dump()
 {
     //printf("\n\n");
-    module->dump();
+    //module->dump();
+    module->print(llvm::errs(), nullptr);
 }
 
 // helper to get expression
@@ -32,7 +34,7 @@ Value * CodeGen::get_expression()
         load_variable = 0;
     }
     if(is_condition)
-        v = Builder.CreateIntCast(v, Type::getInt32Ty(getGlobalContext()), true);
+        v = Builder.CreateIntCast(v, Type::getInt32Ty(TheContext), true);
 
     is_condition = 0;
     is_expression = 1;
@@ -49,7 +51,7 @@ Value * CodeGen::get_condition()
         load_variable = 0;
     }
     if(is_expression)
-        v = Builder.CreateICmpNE(v, ConstantInt::get(Type::getInt32Ty(getGlobalContext()), 0, true));
+        v = Builder.CreateICmpNE(v, ConstantInt::get(Type::getInt32Ty(TheContext), 0, true));
 
     is_condition = 1;
     is_expression = 0;
@@ -59,11 +61,11 @@ Value * CodeGen::get_condition()
 // program
 int CodeGen::visit(AST_program * program)
 {
-    FunctionType *ftype = FunctionType::get(Type::getVoidTy(getGlobalContext()), false);
+    FunctionType *ftype = FunctionType::get(Type::getVoidTy(TheContext), false);
     main_function = Function::Create(ftype, GlobalValue::ExternalLinkage, "main", module);
     program->decl_block->accept(*this);
 
-    BasicBlock * BB = BasicBlock::Create(getGlobalContext(), "entry", main_function);
+    BasicBlock * BB = BasicBlock::Create(TheContext, "entry", main_function);
     Builder.SetInsertPoint(BB);
     program->code_block->accept(*this);
 
@@ -74,7 +76,7 @@ int CodeGen::visit(AST_program * program)
 // decl_block
 int CodeGen::visit(AST_decl_block * decl_block)
 {
-    Type * ty = Type::getInt32Ty(getGlobalContext());
+    Type * ty = Type::getInt32Ty(TheContext);
 
     for(int i = 0; i < (int)decl_block->single_ints.size(); i++)
     {
@@ -87,7 +89,7 @@ int CodeGen::visit(AST_decl_block * decl_block)
         //PointerType* ptr_type = PointerType::get(ty,0);
         GlobalVariable* gv = module->getNamedGlobal(decl_block->single_ints[i]);
         gv->setLinkage(GlobalValue::CommonLinkage);
-        gv->setInitializer(ConstantInt::get(getGlobalContext(), APInt(32,0)));
+        gv->setInitializer(ConstantInt::get(TheContext, APInt(32,0)));
     }
     //cout << endl;
 
@@ -143,12 +145,12 @@ int CodeGen::visit(AST_block_statement * block_statement)
 int CodeGen::visit(AST_if_statement * if_statement)
 {
     Function * funct = Builder.GetInsertBlock()->getParent();
-    BasicBlock * if_BB = BasicBlock::Create(getGlobalContext(), "if", funct);
-    BasicBlock * next_BB = BasicBlock::Create(getGlobalContext(), "ifnext", funct);
+    BasicBlock * if_BB = BasicBlock::Create(TheContext, "if", funct);
+    BasicBlock * next_BB = BasicBlock::Create(TheContext, "ifnext", funct);
 
     if_statement->condition->accept(*this);
     Value * condition_value = get_condition();
-    //condition_value = Builder.CreateICmpEQ(condition_value, ConstantInt::get(Type::getInt1Ty(getGlobalContext()), true, true),"ifcond");
+    //condition_value = Builder.CreateICmpEQ(condition_value, ConstantInt::get(Type::getInt1Ty(TheContext), true, true),"ifcond");
     Builder.CreateCondBr(condition_value, if_BB, next_BB);
 
     Builder.SetInsertPoint(if_BB);
@@ -166,14 +168,14 @@ int CodeGen::visit(AST_if_statement * if_statement)
 int CodeGen::visit(AST_ifelse_statement * ifelse_statement)
 {
     Function * funct = Builder.GetInsertBlock()->getParent();
-    BasicBlock * if_BB = BasicBlock::Create(getGlobalContext(), "if", funct);
-    BasicBlock * else_BB = BasicBlock::Create(getGlobalContext(), "else", funct);
-    BasicBlock * next_BB = BasicBlock::Create(getGlobalContext(), "ifnext", funct);
+    BasicBlock * if_BB = BasicBlock::Create(TheContext, "if", funct);
+    BasicBlock * else_BB = BasicBlock::Create(TheContext, "else", funct);
+    BasicBlock * next_BB = BasicBlock::Create(TheContext, "ifnext", funct);
 
     ifelse_statement->condition->accept(*this);
     Value * condition_value = get_condition();
     //if(load_variable){ condition_value = Builder.CreateLoad(condition_value); load_variable = 0;}
-    //condition_value = Builder.CreateICmpEQ(condition_value, ConstantInt::get(Type::getInt1Ty(getGlobalContext()), true, true),"ifcond");
+    //condition_value = Builder.CreateICmpEQ(condition_value, ConstantInt::get(Type::getInt1Ty(TheContext), true, true),"ifcond");
 
     Builder.CreateCondBr(condition_value, if_BB, else_BB);
 
@@ -215,16 +217,16 @@ int CodeGen::visit(AST_for_statement * for_statement)
 
     Value * cur_val = Builder.CreateLoad(variable);
 
-    BasicBlock * for_condition_BB = BasicBlock::Create(getGlobalContext(), "for_condition", funct);
-    BasicBlock * for_body_BB = BasicBlock::Create(getGlobalContext(), "for_body", funct);
-    BasicBlock * for_after_BB = BasicBlock::Create(getGlobalContext(), "for_after", funct);
+    BasicBlock * for_condition_BB = BasicBlock::Create(TheContext, "for_condition", funct);
+    BasicBlock * for_body_BB = BasicBlock::Create(TheContext, "for_body", funct);
+    BasicBlock * for_after_BB = BasicBlock::Create(TheContext, "for_after", funct);
     BasicBlock * preheaderBB = Builder.GetInsertBlock();
 
     Builder.CreateBr(for_condition_BB);
 
     Builder.SetInsertPoint(for_condition_BB);
 
-    PHINode * phi = Builder.CreatePHI(Type::getInt32Ty(llvm::getGlobalContext()), 2);
+    PHINode * phi = Builder.CreatePHI(Type::getInt32Ty(TheContext), 2);
     phi->addIncoming(cur_val, preheaderBB);
 
     for_statement->to->accept(*this);
@@ -267,9 +269,9 @@ int CodeGen::visit(AST_for_statement * for_statement)
     ret = Builder.CreateStore(start, variable);
     load_variable = 0;
 
-    BasicBlock * for_condition_BB = BasicBlock::Create(getGlobalContext(), "for_condition", funct);
-    BasicBlock * for_body_BB = BasicBlock::Create(getGlobalContext(), "for_body", funct);
-    BasicBlock * for_after_BB = BasicBlock::Create(getGlobalContext(), "for_after", funct);
+    BasicBlock * for_condition_BB = BasicBlock::Create(TheContext, "for_condition", funct);
+    BasicBlock * for_body_BB = BasicBlock::Create(TheContext, "for_body", funct);
+    BasicBlock * for_after_BB = BasicBlock::Create(TheContext, "for_after", funct);
 
     Builder.CreateBr(for_condition_BB);
 
@@ -309,15 +311,15 @@ int CodeGen::visit(AST_while_statement * while_statement)
     Function *funct = Builder.GetInsertBlock()->getParent();
 
     Builder.GetInsertBlock();
-    BasicBlock * cond_body = BasicBlock::Create(getGlobalContext(), "while_condition", funct);
-    BasicBlock * loop_body = BasicBlock::Create(getGlobalContext(), "loop", funct);
-    BasicBlock * afterBB = BasicBlock::Create(getGlobalContext(), "afterloop", funct);
+    BasicBlock * cond_body = BasicBlock::Create(TheContext, "while_condition", funct);
+    BasicBlock * loop_body = BasicBlock::Create(TheContext, "loop", funct);
+    BasicBlock * afterBB = BasicBlock::Create(TheContext, "afterloop", funct);
 
     Builder.CreateBr(cond_body);
     Builder.SetInsertPoint(cond_body);
     while_statement->condition->accept(*this);
     Value * condition_value = get_condition();
-    //condition_value = Builder.CreateICmpEQ(condition_value, ConstantInt::get(Type::getInt1Ty(getGlobalContext()), true, true),"ifcond");
+    //condition_value = Builder.CreateICmpEQ(condition_value, ConstantInt::get(Type::getInt1Ty(TheContext), true, true),"ifcond");
     Builder.CreateCondBr(condition_value, loop_body, afterBB);
 
     Builder.SetInsertPoint(loop_body);
@@ -348,13 +350,13 @@ int CodeGen::visit(AST_goto_statement * goto_statement)
 
     if(goto_labels.find(label) == goto_labels.end())
     {
-        label_BB = BasicBlock::Create(getGlobalContext(), label, funct);
+        label_BB = BasicBlock::Create(TheContext, label, funct);
         goto_labels[label] = label_BB;
     }
     else
         label_BB = goto_labels[label];
 
-    BasicBlock * next_BB = BasicBlock::Create(getGlobalContext(), "goto_next", funct);
+    BasicBlock * next_BB = BasicBlock::Create(TheContext, "goto_next", funct);
 
     if(goto_statement->condition) Builder.CreateCondBr(cond, label_BB, next_BB);
     else Builder.CreateBr(label_BB);
@@ -419,7 +421,7 @@ int CodeGen::visit(AST_label_statement * label_statement)
     BasicBlock * label_BB;
     if(goto_labels.find(label) == goto_labels.end())
     {
-        label_BB = BasicBlock::Create(getGlobalContext(), label, funct);
+        label_BB = BasicBlock::Create(TheContext, label, funct);
         goto_labels[label] = label_BB;
     }
     else
@@ -502,7 +504,7 @@ int CodeGen::visit(AST_variable_array_int * variable_array_int)
     variable_array_int->index->accept(*this);
     Value * index = get_expression();
 
-    //index = ConstantInt::get(getGlobalContext(), APInt(32, 2));
+    //index = ConstantInt::get(TheContext, APInt(32, 2));
 
     if(index == NULL)
         ret = ErrorV("Invalid Array Index in " + array_name);
@@ -520,7 +522,7 @@ int CodeGen::visit(AST_variable_array_int * variable_array_int)
 int CodeGen::visit(AST_int_literal * int_literal)
 {
     is_expression = 1;
-    ret = ConstantInt::get(getGlobalContext(), llvm::APInt(32, int_literal->int_literal));
+    ret = ConstantInt::get(TheContext, llvm::APInt(32, int_literal->int_literal));
     return 0;
 }
 

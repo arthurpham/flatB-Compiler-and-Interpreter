@@ -82,7 +82,7 @@ extern union _NODE_ yylval;
                    }
 
 
-[ \t\n]    { /* Do nothing */ }
+[ \t\r\n]    { /* Do nothing */ }
 
 .    {
          fprintf(flex_output, "Unexpected token encountered: %s\n", yytext);
