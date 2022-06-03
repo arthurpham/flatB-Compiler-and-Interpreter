@@ -24,5 +24,18 @@ codeblock{
             }
         }
     }
-
+    print(arr[0]);
+    print(arr[1]);
+    print(arr[10]);
+    print(arr[20]);
+    print(arr[30]);
+    print(arr[40]);
+    print(arr[50]);
+    print(arr[60]);
+    print(arr[7500]);
+    print(arr[7501]);
+    print(arr[7502]);
+    print(arr[19997]);
+    print(arr[19998]);
+    print(arr[19999]);
 }
